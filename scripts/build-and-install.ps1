@@ -12,6 +12,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Input Validation
+if ($PluginName -notmatch '^[a-zA-Z0-9_\-]+$') {
+    throw "Invalid PluginName: $PluginName. Only alphanumeric characters, underscores, and hyphens are allowed."
+}
+
 # Import required modules
 . "$PSScriptRoot\state-management.ps1"
 . "$PSScriptRoot\error-detection.ps1"
@@ -47,9 +52,11 @@ if ($state.current_phase -ne "code_complete" -and -not $SkipTests) {
 
 # 1. Configure with error monitoring
 Write-Host "Configuring build..." -ForegroundColor Yellow
-$visageFlag = if ($UseVisage) { "-DAPC_ENABLE_VISAGE:BOOL=ON" } else { "" }
-$configureCommand = "cmake -S `"$RootPath`" -B `"$BuildDir`" -G `"Visual Studio 17 2022`" -A x64 --fresh $visageFlag"
-$configResult = Invoke-MonitoredCommand -Command $configureCommand -ShowOutput -ThrowOnError
+$cmakeArgs = @("-S", $RootPath, "-B", $BuildDir, "-G", "Visual Studio 17 2022", "-A", "x64", "--fresh")
+if ($UseVisage) { $cmakeArgs += "-DAPC_ENABLE_VISAGE:BOOL=ON" }
+
+$configResult = Invoke-MonitoredCommand -Command "cmake configure" `
+    -ScriptBlock { cmake @args } -ArgumentList $cmakeArgs -ShowOutput -ThrowOnError
 
 if ($configResult.Errors.Count -gt 0) {
     Write-Host "Configuration warnings detected" -ForegroundColor Yellow
@@ -58,14 +65,17 @@ if ($configResult.Errors.Count -gt 0) {
         Write-Host "Known configuration issue detected: $($knownIssue.Title)" -ForegroundColor Cyan
         Apply-KnownSolution -Issue $knownIssue
         # Retry configuration
-        $configResult = Invoke-MonitoredCommand -Command $configureCommand -ShowOutput -ThrowOnError
+        $configResult = Invoke-MonitoredCommand -Command "cmake configure" `
+            -ScriptBlock { cmake @args } -ArgumentList $cmakeArgs -ShowOutput -ThrowOnError
     }
 }
 
 # 2. Build VST3 with error monitoring
 Write-Host "Compiling VST3..." -ForegroundColor Yellow
-$buildVst3Command = "cmake --build `"$BuildDir`" --config Release --target `"$($PluginName)_VST3`""
-$vst3Result = Invoke-MonitoredCommand -Command $buildVst3Command -ShowOutput -ThrowOnError
+$vst3Target = "$($PluginName)_VST3"
+$vst3Result = Invoke-MonitoredCommand -Command "cmake build VST3" `
+    -ScriptBlock { cmake --build $args[0] --config Release --target $args[1] } `
+    -ArgumentList $BuildDir, $vst3Target -ShowOutput -ThrowOnError
 
 if ($vst3Result.Errors.Count -gt 0) {
     Write-Host "VST3 build errors detected" -ForegroundColor Red
@@ -76,7 +86,9 @@ if ($vst3Result.Errors.Count -gt 0) {
         Write-Host "Known issue detected: $($knownIssue.Title)" -ForegroundColor Cyan
         Apply-KnownSolution -Issue $knownIssue
         # Retry build
-        $vst3Result = Invoke-MonitoredCommand -Command $buildVst3Command -ShowOutput -ThrowOnError
+        $vst3Result = Invoke-MonitoredCommand -Command "cmake build VST3" `
+            -ScriptBlock { cmake --build $args[0] --config Release --target $args[1] } `
+            -ArgumentList $BuildDir, $vst3Target -ShowOutput -ThrowOnError
     }
 
     # If still failing, auto-capture new issue
@@ -88,8 +100,10 @@ if ($vst3Result.Errors.Count -gt 0) {
 
 # 3. Build Standalone with error monitoring
 Write-Host "Compiling Standalone..." -ForegroundColor Yellow
-$buildStandaloneCommand = "cmake --build `"$BuildDir`" --config Release --target `"$($PluginName)_Standalone`""
-$standaloneResult = Invoke-MonitoredCommand -Command $buildStandaloneCommand -ShowOutput -ThrowOnError
+$standaloneTarget = "$($PluginName)_Standalone"
+$standaloneResult = Invoke-MonitoredCommand -Command "cmake build Standalone" `
+    -ScriptBlock { cmake --build $args[0] --config Release --target $args[1] } `
+    -ArgumentList $BuildDir, $standaloneTarget -ShowOutput -ThrowOnError
 
 if ($standaloneResult.Errors.Count -gt 0) {
     Write-Host "Standalone build errors detected" -ForegroundColor Red
@@ -100,7 +114,9 @@ if ($standaloneResult.Errors.Count -gt 0) {
         Write-Host "Known issue detected: $($knownIssue.Title)" -ForegroundColor Cyan
         Apply-KnownSolution -Issue $knownIssue
         # Retry build
-        $standaloneResult = Invoke-MonitoredCommand -Command $buildStandaloneCommand -ShowOutput -ThrowOnError
+        $standaloneResult = Invoke-MonitoredCommand -Command "cmake build Standalone" `
+            -ScriptBlock { cmake --build $args[0] --config Release --target $args[1] } `
+            -ArgumentList $BuildDir, $standaloneTarget -ShowOutput -ThrowOnError
     }
 
     # If still failing, auto-capture new issue

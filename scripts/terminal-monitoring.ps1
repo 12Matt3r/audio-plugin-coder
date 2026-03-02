@@ -4,6 +4,7 @@
 function Watch-TerminalOutput {
     param(
         [ScriptBlock]$Command,
+        [PSObject[]]$ArgumentList,
         [string[]]$ErrorPatterns = @("error", "Error", "ERROR", "failed", "Failed", "FAILED"),
         [int]$TimeoutSeconds = 300,
         [switch]$ShowOutput
@@ -11,7 +12,7 @@ function Watch-TerminalOutput {
 
     Write-Host "Starting terminal monitoring..." -ForegroundColor Cyan
 
-    $job = Start-Job -ScriptBlock $Command
+    $job = Start-Job -ScriptBlock $Command -ArgumentList $ArgumentList
     $startTime = Get-Date
     $output = ""
     $errors = @()
@@ -84,18 +85,28 @@ function Watch-TerminalOutput {
 function Invoke-MonitoredCommand {
     param(
         [string]$Command,
+        [ScriptBlock]$ScriptBlock,
+        [PSObject[]]$ArgumentList,
         [string[]]$ErrorPatterns = @("error", "Error", "ERROR", "failed", "Failed", "FAILED"),
         [int]$TimeoutSeconds = 300,
         [switch]$ShowOutput,
         [switch]$ThrowOnError
     )
 
-    Write-Host "Executing:" $Command -ForegroundColor Cyan
-
-    $scriptBlock = [ScriptBlock]::Create($Command)
+    if ($ScriptBlock) {
+        if ($Command) {
+            Write-Host "Executing:" $Command -ForegroundColor Cyan
+        } else {
+            Write-Host "Executing monitored script block..." -ForegroundColor Cyan
+        }
+        $targetScript = $ScriptBlock
+    } else {
+        Write-Host "Executing:" $Command -ForegroundColor Cyan
+        $targetScript = [ScriptBlock]::Create($Command)
+    }
 
     try {
-        $result = Watch-TerminalOutput -Command $scriptBlock -ErrorPatterns $ErrorPatterns -TimeoutSeconds $TimeoutSeconds -ShowOutput:$ShowOutput
+        $result = Watch-TerminalOutput -Command $targetScript -ArgumentList $ArgumentList -ErrorPatterns $ErrorPatterns -TimeoutSeconds $TimeoutSeconds -ShowOutput:$ShowOutput
 
         if ($result.ExitCode -ne 0 -and $ThrowOnError) {
             throw "Command failed with exit code $($result.ExitCode)"
